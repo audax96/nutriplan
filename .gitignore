@@ -1,0 +1,15 @@
+# Secrets: never commit, zip or share these
+.env
+.env.*
+!.env.docker.example
+backend/.env
+!backend/.env.example
+
+# Build output and tools
+app/build/
+app/.dart_tool/
+.idea/
+*.iml
+*.zip
+*.sql.gz
+.DS_Store

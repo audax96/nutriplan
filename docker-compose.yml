@@ -1,0 +1,76 @@
+# Development setup: MySQL + the PHP API. The Flutter app runs on your machine.
+#   copy .env.docker.example to .env, then fill in ANTHROPIC_API_KEY and the two DB passwords
+#   docker compose build --pull api
+#   docker compose up -d
+#
+# Security notes
+# - The API image refuses to build on PHP older than 8.3.36 (CVE-2026-109618/109619).
+# - Port 8000 is plain HTTP for testing on your own network. Never forward it to the internet;
+#   a real launch needs HTTPS in front of the API.
+services:
+  db:
+    image: mysql:8.0
+    restart: unless-stopped  
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?Set DB_ROOT_PASSWORD in .env}
+      MYSQL_DATABASE: nutriplan
+      MYSQL_USER: nutriplan
+      MYSQL_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+    # No "ports:" on purpose: the database is only reachable from the api container.
+    volumes:
+      - dbdata:/var/lib/mysql
+      # Runs once, on the first start with an empty volume.
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      # Only passes on the real server (not the temporary init one) once the tables exist.
+      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_PASSWORD mysql -h127.0.0.1 -unutriplan nutriplan -e 'SELECT 1 FROM ingredients LIMIT 1'"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  api:
+    build: ./backend
+    restart: unless-stopped 
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      # 0.0.0.0 lets your phone reach it over Wi-Fi. Use API_BIND=127.0.0.1 in .env when you
+      # only test over USB (adb reverse) or the emulator.
+      - "${API_BIND:-0.0.0.0}:8000:8000"
+    environment:
+      DB_HOST: db
+      DB_NAME: nutriplan
+      DB_USER: nutriplan
+      DB_PASS: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-sonnet-5-5}
+      # Only needed for a browser (Flutter web) client. The phone app does not use CORS.
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+      # 1 adds Claude's own error text to messages in the app. Keep 0 unless debugging.
+      APP_DEBUG: ${APP_DEBUG:-0}
+      # Ceilings for the whole server per 24 h, so Claude credit cannot be drained.
+      DAILY_PLAN_LIMIT: ${DAILY_PLAN_LIMIT:-100}
+      DAILY_SCAN_LIMIT: ${DAILY_SCAN_LIMIT:-300}
+    volumes:
+      - ./backend:/app:ro         # edit PHP on your machine, no rebuild needed (read-only inside)
+      - ./database:/database:ro
+    mem_limit: 1g
+    pids_limit: 200
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    # Refuses to start on a vulnerable PHP, updates an older database, loads or refreshes the
+    # food catalogue (all safe to repeat), then starts the server.
+    command: >
+      sh -c "php -r 'exit(version_compare(PHP_VERSION, \"8.3.36\", \"<\") ? 1 : 0);' || { echo 'PHP is older than 8.3.36 and vulnerable. Run: docker compose build --pull --no-cache api' >&2; exit 1; };
+             php bin/migrate.php &&
+             php bin/import_catalogue.php /database/catalogue_seed.csv &&
+             php -S 0.0.0.0:8000 -t public public/index.php"
+
+volumes:
+  dbdata:
