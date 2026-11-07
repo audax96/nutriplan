@@ -55,7 +55,7 @@ final class PlanVerifier
         return $out;
     }
 
-    private function blockReason(array $ing, array $c): ?string
+    public function blockReason(array $ing, array $c): ?string
     {
         $diet = (string)($c['diet_type'] ?? 'omnivore');
         if (in_array($ing['category'], self::DIET_BLOCK[$diet] ?? [], true)) {
@@ -99,14 +99,18 @@ final class PlanVerifier
     {
         $issues = [];
         $warnings = [];
+        // The same issues again, sorted by where they are: day number => issues, and
+        // weekly ones by a stable key. Used when only part of a plan changes (a swapped meal).
+        $byDay = [];
+        $weekly = [];
         $expectedDays = (int)($constraints['days'] ?? 7);
         $rawDays = $raw['days'] ?? null;
 
         if (!is_array($rawDays) || $rawDays === []) {
-            return $this->result(["The plan has no days. Submit all $expectedDays days."], [], null);
+            return $this->result(["The plan has no days. Submit all $expectedDays days."], [], null, [], ['days' => 'no days']);
         }
         if (count($rawDays) !== $expectedDays) {
-            $issues[] = "The plan must contain exactly $expectedDays days but has " . count($rawDays) . '.';
+            $issues[] = $weekly['days'] = "The plan must contain exactly $expectedDays days but has " . count($rawDays) . '.';
         }
 
         // 1. Structure, catalogue membership, diet and allergen checks
@@ -123,16 +127,16 @@ final class PlanVerifier
                     $amt = (float)($it['amount'] ?? 0);
                     $ing = $this->cat->get($id);
                     if ($ing === null) {
-                        $issues[] = "$label '$mealName': ingredient_id $id is not in the catalogue.";
+                        $issues[] = $byDay[$di + 1][] = "$label '$mealName': ingredient_id $id is not in the catalogue.";
                         continue;
                     }
                     $reason = $this->blockReason($ing, $constraints);
                     if ($reason !== null) {
-                        $issues[] = "$label '$mealName' uses {$ing['name']}, which is not allowed ($reason).";
+                        $issues[] = $byDay[$di + 1][] = "$label '$mealName' uses {$ing['name']}, which is not allowed ($reason).";
                         continue;
                     }
                     if ($amt <= 0 || $amt > self::MAX_AMOUNT) {
-                        $issues[] = "$label '$mealName': the amount for {$ing['name']} must be between 1 and "
+                        $issues[] = $byDay[$di + 1][] = "$label '$mealName': the amount for {$ing['name']} must be between 1 and "
                             . self::MAX_AMOUNT . " {$ing['unit']}.";
                         continue;
                     }
@@ -149,7 +153,7 @@ final class PlanVerifier
                 }
             }
             if ($meals === []) {
-                $issues[] = "$label has no valid meals.";
+                $issues[] = $byDay[$di + 1][] = "$label has no valid meals.";
             }
             $days[] = ['day' => $di + 1, 'meals' => $meals];
         }
@@ -177,7 +181,7 @@ final class PlanVerifier
                 $sum[$k] += $v;
             }
             if ($day['meals'] !== [] && abs($totals['kcal'] - $targetKcal) / $targetKcal > self::KCAL_TOLERANCE) {
-                $issues[] = sprintf(
+                $issues[] = $byDay[$day['day']][] = sprintf(
                     'Day %d totals %d kcal after portion scaling but the target is %d kcal. %s',
                     $day['day'],
                     round($totals['kcal']),
@@ -234,7 +238,7 @@ final class PlanVerifier
         // Protein is a floor; carbs and fat only need to be in a sensible band.
         $ratio = $avg['protein_g'] / max(1, $targets['protein_g']);
         if ($ratio < 0.90) {
-            $issues[] = sprintf('Average protein is %dg/day against a target of %dg. Add lean protein (meat, fish, eggs, dairy, legumes, tofu).',
+            $issues[] = $weekly['protein_g'] = sprintf('Average protein is %dg/day against a target of %dg. Add lean protein (meat, fish, eggs, dairy, legumes, tofu).',
                 round($avg['protein_g']), $targets['protein_g']);
         } elseif ($ratio > 1.35) {
             $warnings[] = 'Protein is well above the target.';
@@ -242,7 +246,7 @@ final class PlanVerifier
         foreach (['carb_g' => 'carbohydrate', 'fat_g' => 'fat'] as $k => $label) {
             $r = $avg[$k] / max(1, $targets[$k]);
             if ($r < 0.70 || $r > 1.30) {
-                $issues[] = sprintf('Average %s is %dg/day against a target of %dg (%s).',
+                $issues[] = $weekly[$k] = sprintf('Average %s is %dg/day against a target of %dg (%s).',
                     $label, round($avg[$k]), $targets[$k], $r < 1 ? 'too low' : 'too high');
             } elseif ($r < 0.85 || $r > 1.15) {
                 $warnings[] = sprintf('Average %s (%dg) is a little away from the %dg target.', $label, round($avg[$k]), $targets[$k]);
@@ -270,7 +274,7 @@ final class PlanVerifier
                 $warnings[] = 'A vegan diet needs a vitamin B12 supplement or fortified foods.';
             } elseif ($pct < self::MICRO_FAIL) {
                 $allowed ??= $this->allowedIngredients($constraints);
-                $issues[] = sprintf(
+                $issues[] = $weekly["micro:$key"] = sprintf(
                     'Weekly average %s is %s against a target of %s (%d%%). Add rich sources such as %s.',
                     $label, round($a, 1), $target, round($pct * 100), $this->topSources($allowed, $key)
                 );
@@ -298,10 +302,10 @@ final class PlanVerifier
             'micros'     => $micros,
             'shopping_list' => $shoppingList,
         ];
-        return $this->result($issues, $warnings, $plan);
+        return $this->result($issues, $warnings, $plan, $byDay, $weekly);
     }
 
-    private function result(array $issues, array $warnings, ?array $plan): array
+    private function result(array $issues, array $warnings, ?array $plan, array $byDay = [], array $weekly = []): array
     {
         $issues = array_values(array_unique($issues));
         $warnings = array_values(array_unique($warnings));
@@ -314,6 +318,8 @@ final class PlanVerifier
             'issue_count' => count($issues),
             'warnings'    => $warnings,
             'plan'        => $plan,
+            'by_day'      => $byDay,
+            'weekly'      => $weekly,
         ];
     }
 

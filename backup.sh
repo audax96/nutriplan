@@ -1,5 +1,6 @@
 #!/bin/bash
 set -eo pipefail
+export PATH="$HOME/.docker/bin:/usr/local/bin:/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin:$PATH"
 DIR="$HOME/Backups/nutriplan"
 mkdir -p "$DIR"
 cd "$HOME/Projects/nutriplan"

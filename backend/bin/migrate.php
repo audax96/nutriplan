@@ -35,4 +35,25 @@ foreach (['protein_pct', 'carb_pct', 'fat_pct'] as $old) {
     }
 }
 
+// 2026-11-07: swapping one meal or day, and food notes.
+if (!$hasColumn('meal_plans', 'job_json')) {
+    $pdo->exec('ALTER TABLE meal_plans
+        ADD COLUMN job_json     JSON NULL AFTER attempts,
+        ADD COLUMN base_plan_id INT UNSIGNED NULL AFTER job_json');
+    $done[] = 'added meal swap columns';
+}
+$st = $pdo->prepare('SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?');
+$st->execute([$dbName, 'member_preferences']);
+if ((int)$st->fetchColumn() === 0) {
+    $pdo->exec('CREATE TABLE member_preferences (
+        id         INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        member_id  INT UNSIGNED NOT NULL,
+        note       VARCHAR(200) NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        KEY idx_prefs_member (member_id),
+        CONSTRAINT fk_prefs_member FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB');
+    $done[] = 'added food notes';
+}
+
 echo $done === [] ? "Database is up to date.\n" : 'Database updated: ' . implode(', ', $done) . ".\n";

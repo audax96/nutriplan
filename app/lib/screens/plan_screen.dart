@@ -7,6 +7,7 @@ import '../print_menu.dart';
 import '../ui.dart';
 import '../util.dart';
 import 'auth_screen.dart';
+import 'onboarding_screen.dart';
 import 'pantry_screen.dart';
 
 /// The Meals tab: this week's meals, one day at a time.
@@ -48,6 +49,9 @@ class _PlanScreenState extends State<PlanScreen> {
   int _day = 0;
   int _member = 0;
   Timer? _timer;
+
+  /// The swap-failed notice the person closed (so it does not come back on the next poll).
+  String? _closedNotice;
 
   @override
   void initState() {
@@ -127,13 +131,28 @@ class _PlanScreenState extends State<PlanScreen> {
       final latest = await Api.instance.latestPlan();
       if (!mounted) return;
       final wasBuilding = _building;
+      // A swap (finished or not) keeps the person on the day and person they were looking at.
+      final wasSwap = wasBuilding && _stored?['job'] is Map;
+      final swapDone = wasSwap &&
+          latest?['job'] is Map &&
+          latest?['status'] == 'ready' &&
+          latest?['notice'] == null;
       setState(() {
         _stored = latest;
-        if (!quiet || (wasBuilding && !_building)) {
+        if (!wasSwap && (!quiet || (wasBuilding && !_building))) {
           _day = _startDay(_ready);
           _member = 0;
         }
       });
+      if (swapDone) {
+        final job = Map<String, dynamic>.from(latest!['job'] as Map);
+        final what = job['type'] == 'day'
+            ? 'Your new day is ready.'
+            : (job['type'] == 'dinner'
+                ? 'The new family dinner is ready.'
+                : 'Your new ${job['slot'] ?? 'meal'} is ready.');
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(what)));
+      }
       _notifyPlan();
       _syncPolling();
     } on ApiException catch (e) {
@@ -253,6 +272,52 @@ class _PlanScreenState extends State<PlanScreen> {
     }
   }
 
+  /// Asks what to swap and what was wrong, then starts the swap in the background. The
+  /// current week stays on screen until the new one is ready.
+  Future<void> _openSwap(Map<String, dynamic> stored, Map<String, dynamic> member, int dayIndex,
+      {required String scope, int? mealIndex}) async {
+    final plan = stored['plan'] as Map;
+    final shared = plan['shared_dinners'] == true;
+    final day = Map<String, dynamic>.from((member['days'] as List)[dayIndex] as Map);
+    final meals = (day['meals'] as List).map((m) => Map<String, dynamic>.from(m as Map)).toList();
+    final body = await showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.surface,
+      builder: (_) => _SwapSheet(
+        meals: meals,
+        mealIndex: mealIndex,
+        startScope: scope,
+        isChild: member['kind'] == 'child',
+        sharedDinners: shared,
+        familySize: (plan['members'] as List).length,
+      ),
+    );
+    if (body == null || !mounted) return;
+    setState(() {
+      _starting = true;
+      _error = null;
+    });
+    try {
+      final previous = _ready;
+      final row = await Api.instance.swapMeal((stored['id'] as num).toInt(), {
+        'member_id': member['member_id'],
+        'day': dayIndex,
+        ...body,
+      });
+      if (!mounted) return;
+      setState(() => _stored = {...row, 'fallback': previous});
+      _notifyPlan();
+      _syncPolling();
+    } on ApiException catch (e) {
+      if (e.status == 401) return _signOut();
+      if (mounted) setState(() => _error = e.message);
+      if (e.code == 'plan_outdated') _loadLatest(quiet: true);
+    } finally {
+      if (mounted) setState(() => _starting = false);
+    }
+  }
+
   /// Opens the print screen with the week's menu (it can also save the menu as a PDF).
   Future<void> _printMenu() async {
     final ready = _ready;
@@ -310,10 +375,24 @@ class _PlanScreenState extends State<PlanScreen> {
         ? (_stored!['error'] as Map)['message']?.toString()
         : null;
 
+    final notice = _stored?['notice'] is Map ? Map<String, dynamic>.from(_stored!['notice'] as Map) : null;
+    final noticeText = notice?['message']?.toString();
+
     return [
       if (_error != null) ...[
         Banner2(_error!, isError: true),
         const SizedBox(height: 16),
+      ],
+      if (noticeText != null && noticeText != _closedNotice) ...[
+        Banner2(noticeText, isError: true),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton(
+            onPressed: () => setState(() => _closedNotice = noticeText),
+            child: const Text('OK'),
+          ),
+        ),
+        const SizedBox(height: 8),
       ],
       if (_building) ...[
         _progressCard(),
@@ -385,9 +464,11 @@ class _PlanScreenState extends State<PlanScreen> {
                   style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 4),
-                const Text(
-                  'This can take a few minutes while we check every meal against your calories, allergies and vitamins. You can leave this screen.',
-                  style: TextStyle(fontSize: 16, height: 1.4, color: AppColors.muted),
+                Text(
+                  _stored?['job'] is Map
+                      ? 'This usually takes under a minute. Your current week stays here until the new one is ready.'
+                      : 'This can take a few minutes while we check every meal against your calories, allergies and vitamins. You can leave this screen.',
+                  style: const TextStyle(fontSize: 16, height: 1.4, color: AppColors.muted),
                 ),
               ],
             ),
@@ -397,7 +478,7 @@ class _PlanScreenState extends State<PlanScreen> {
     );
   }
 
-  Widget _stat(String value, String label) {
+  Widget _stat(String value, String label, {String? goal}) {
     return Expanded(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -405,9 +486,62 @@ class _PlanScreenState extends State<PlanScreen> {
           Text(value, style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w800)),
           const SizedBox(height: 2),
           Text(label, style: const TextStyle(fontSize: 16, color: AppColors.muted)),
+          if (goal != null) ...[
+            const SizedBox(height: 4),
+            Text('Goal $goal',
+                style: const TextStyle(
+                    fontSize: 15, fontWeight: FontWeight.w600, color: AppColors.accent)),
+          ],
         ],
       ),
     );
+  }
+
+  /// What the meals should add up to each day (drinks already taken out).
+  Map<String, dynamic>? _mealGoals(Map<String, dynamic>? t) {
+    if (t == null) return null;
+    final drinks = t['drinks'] is Map ? Map<String, dynamic>.from(t['drinks'] as Map) : null;
+    final drinkKcal = (toDouble(drinks?['kcal']) ?? 0).round();
+    return (drinkKcal > 0 && t['food'] is Map) ? Map<String, dynamic>.from(t['food'] as Map) : t;
+  }
+
+  /// Opens the goal step of this person's details. New goals apply to the next week built.
+  Future<void> _editGoals(Map<String, dynamic> member) async {
+    final id = (member['member_id'] as num).toInt();
+    try {
+      if (member['is_owner'] == true) {
+        // Load it fresh: a swap may have added dislikes or food notes since the app opened,
+        // and saving an old copy would wipe them.
+        final fresh = await Api.instance.getProfile();
+        if (!mounted) return;
+        final p = fresh['profile'];
+        await Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => OnboardingScreen(
+                existing: p is Map ? Map<String, dynamic>.from(p) : widget.profile,
+                initialStep: 2)));
+        return;
+      }
+      final detail = await Api.instance.getMember(id);
+      if (!mounted) return;
+      final p = detail['profile'];
+      if (p is! Map) {
+        setState(() => _error = 'Please finish ${member['name']}\'s details on the Family tab first.');
+        return;
+      }
+      final saved = await Navigator.of(context).push<bool>(MaterialPageRoute(
+          builder: (_) => OnboardingScreen(
+              existing: Map<String, dynamic>.from(p),
+              memberId: id,
+              initialStep: 2)));
+      if (saved == true && mounted) {
+        _loadFamily();
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Saved. Build a new week to plan with the new goals.')));
+      }
+    } on ApiException catch (e) {
+      if (e.status == 401) return _signOut();
+      if (mounted) setState(() => _error = e.message);
+    }
   }
 
   /// The daily target figures, without a card around them.
@@ -519,6 +653,15 @@ class _PlanScreenState extends State<PlanScreen> {
         (planIds.length != familyIds.length || !planIds.containsAll(familyIds));
 
     final hasDetails = targets != null || micros.isNotEmpty || warnings.isNotEmpty;
+    final goals = isChild ? null : _mealGoals(targets);
+
+    // Has the account holder changed their goals since this week was built?
+    final now = widget.targets;
+    final goalsChanged = member['is_owner'] == true &&
+        targets != null &&
+        now != null &&
+        now['error'] == null &&
+        ['kcal', 'protein_g', 'carb_g', 'fat_g'].any((k) => fmtNum(now[k]) != fmtNum(targets[k]));
 
     return [
       if (familyChanged) ...[
@@ -557,20 +700,61 @@ class _PlanScreenState extends State<PlanScreen> {
             'Children eat the shared family dinners. Breakfast, lunch and snacks are not planned for ${member['name']}.'),
         const SizedBox(height: 12),
       ],
+      if (goalsChanged) ...[
+        const Banner2(
+            'Your goals have changed since this week was built. Build a new week to plan with them.'),
+        const SizedBox(height: 12),
+      ],
       AppCard(
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _stat(fmtNum(totals['kcal']), isChild ? 'kcal at dinner' : 'kcal'),
-            _stat('${fmtNum(totals['protein_g'])} g', 'Protein'),
-            _stat('${fmtNum(totals['carb_g'])} g', 'Carbs'),
-            _stat('${fmtNum(totals['fat_g'])} g', 'Fat'),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _stat(fmtNum(totals['kcal']), isChild ? 'kcal at dinner' : 'kcal',
+                    goal: goals == null ? null : fmtNum(goals['kcal'])),
+                _stat('${fmtNum(totals['protein_g'])} g', 'Protein',
+                    goal: goals == null ? null : '${fmtNum(goals['protein_g'])} g'),
+                _stat('${fmtNum(totals['carb_g'])} g', 'Carbs',
+                    goal: goals == null ? null : '${fmtNum(goals['carb_g'])} g'),
+                _stat('${fmtNum(totals['fat_g'])} g', 'Fat',
+                    goal: goals == null ? null : '${fmtNum(goals['fat_g'])} g'),
+              ],
+            ),
+            if (!isChild) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () => _editGoals(member),
+                  icon: const Icon(Icons.tune, size: 24),
+                  label: Text(members.length > 1 && member['is_owner'] != true
+                      ? 'Change ${member['name']}\'s goals'
+                      : 'Change my goals'),
+                ),
+              ),
+            ],
           ],
         ),
       ),
       const SizedBox(height: 12),
-      for (final meal in meals) ...[
-        _MealCard(meal: meal),
+      for (var i = 0; i < meals.length; i++) ...[
+        _MealCard(
+          meal: meals[i],
+          onSwap: _building || _starting
+              ? null
+              : () => _openSwap(stored, member, di, scope: 'meal', mealIndex: i),
+        ),
         const SizedBox(height: 12),
+      ],
+      if (!isChild && !_building) ...[
+        OutlinedButton.icon(
+          onPressed: _starting ? null : () => _openSwap(stored, member, di, scope: 'day'),
+          icon: const Icon(Icons.autorenew, size: 26),
+          label: const Text('Swap this whole day'),
+        ),
+        const SizedBox(height: 16),
       ],
       const SizedBox(height: 4),
       _pantryCard(),
@@ -730,9 +914,12 @@ class _PlanScreenState extends State<PlanScreen> {
 
 /// A meal: name and calories at a glance, tap for ingredients and how to make it.
 class _MealCard extends StatefulWidget {
-  const _MealCard({required this.meal});
+  const _MealCard({required this.meal, this.onSwap});
 
   final Map<String, dynamic> meal;
+
+  /// Opens the swap sheet for this meal (null while the week is being changed).
+  final VoidCallback? onSwap;
 
   @override
   State<_MealCard> createState() => _MealCardState();
@@ -828,6 +1015,17 @@ class _MealCardState extends State<_MealCard> {
               const SizedBox(height: 12),
               Text(prep, style: const TextStyle(fontSize: 18, height: 1.5)),
             ],
+          ],
+          if (widget.onSwap != null) ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: widget.onSwap,
+                icon: const Icon(Icons.autorenew, size: 24),
+                label: Text(shared ? 'Swap this family dinner' : 'Swap this meal'),
+              ),
+            ),
           ],
         ],
       ),
@@ -945,6 +1143,235 @@ class _BuildSheet extends StatelessWidget {
               child: const Text('Cancel'),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+
+/// What to swap (this meal or the whole day) and, if they want to say, what was wrong
+/// with it. Returns the request body (scope, meal, feedback) or null when cancelled.
+class _SwapSheet extends StatefulWidget {
+  const _SwapSheet({
+    required this.meals,
+    required this.mealIndex,
+    required this.startScope,
+    required this.isChild,
+    required this.sharedDinners,
+    required this.familySize,
+  });
+
+  final List<Map<String, dynamic>> meals;
+  final int? mealIndex;
+  final String startScope;
+  final bool isChild;
+  final bool sharedDinners;
+  final int familySize;
+
+  @override
+  State<_SwapSheet> createState() => _SwapSheetState();
+}
+
+class _SwapSheetState extends State<_SwapSheet> {
+  static const _reasons = [
+    ['ingredient', 'A food in it'],
+    ['texture', 'Texture'],
+    ['taste', 'Taste'],
+    ['effort', 'Too much work'],
+    ['portion', 'Portion size'],
+    ['other', 'Something else'],
+  ];
+
+  late String _scope = widget.startScope;
+  final Set<String> _picked = {};
+  final Set<int> _foods = {};
+  final _note = TextEditingController();
+  bool _remember = true;
+
+  @override
+  void dispose() {
+    _note.dispose();
+    super.dispose();
+  }
+
+  Map<String, dynamic>? get _meal =>
+      widget.mealIndex != null && widget.mealIndex! < widget.meals.length
+          ? widget.meals[widget.mealIndex!]
+          : null;
+
+  /// A child's meal, or an adult's shared dinner: it changes for the whole family.
+  bool get _familyDinner =>
+      widget.isChild || (widget.sharedDinners && _scope == 'meal' && _meal?['shared'] == true);
+
+  /// The meals that will be replaced, for the list of foods to pick from.
+  List<Map<String, dynamic>> get _replaced {
+    if (_scope == 'meal') return [if (_meal != null) _meal!];
+    return widget.meals
+        .where((m) => !(widget.sharedDinners && m['shared'] == true))
+        .toList();
+  }
+
+  /// Every food in the meals being replaced, once.
+  List<Map<String, dynamic>> get _foodChoices {
+    final seen = <int>{};
+    final out = <Map<String, dynamic>>[];
+    for (final m in _replaced) {
+      for (final i in (m['items'] as List? ?? const [])) {
+        final item = Map<String, dynamic>.from(i as Map);
+        final id = (item['ingredient_id'] as num).toInt();
+        if (seen.add(id)) out.add(item);
+      }
+    }
+    return out;
+  }
+
+  void _submit() {
+    final note = _note.text.trim();
+    final hasFeedback = _picked.isNotEmpty || note.isNotEmpty;
+    Navigator.of(context).pop(<String, dynamic>{
+      'scope': _familyDinner ? 'meal' : _scope,
+      if (_scope == 'meal' || _familyDinner) 'meal': widget.mealIndex,
+      if (hasFeedback)
+        'feedback': {
+          'reasons': _picked.toList(),
+          'ingredient_ids': _picked.contains('ingredient') ? _foods.toList() : <int>[],
+          'note': note,
+          'remember': _remember,
+        },
+    });
+  }
+
+  Widget _chip(String label, bool selected, VoidCallback onTap) {
+    return FilterChip(
+      label: Text(label, style: const TextStyle(fontSize: 17)),
+      selected: selected,
+      onSelected: (_) => onTap(),
+      showCheckmark: true,
+      selectedColor: AppColors.surfaceHigh,
+      checkmarkColor: AppColors.accent,
+      side: BorderSide(color: selected ? AppColors.accent : AppColors.line, width: 1.5),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final meal = _meal;
+    final canChooseScope = !widget.isChild && meal != null && meal['shared'] != true;
+    final title = _familyDinner
+        ? 'Swap this family dinner?'
+        : (_scope == 'day' ? 'Swap this whole day?' : 'Swap ${meal?['name'] ?? 'this meal'}?');
+    final button = _familyDinner
+        ? 'Find a new family dinner'
+        : (_scope == 'day' ? 'Rebuild this day' : 'Find a new meal');
+    final hasFeedback = _picked.isNotEmpty || _note.text.trim().isNotEmpty;
+
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(title, style: theme.textTheme.headlineSmall),
+              const SizedBox(height: 12),
+              if (_familyDinner && widget.familySize > 1) ...[
+                const Banner2(
+                    'Everyone shares this dinner, so it will change for the whole family. Each person still gets their own portion.'),
+                const SizedBox(height: 16),
+              ],
+              if (canChooseScope) ...[
+                ChoiceTile(
+                  label: 'Just this meal',
+                  subtitle: meal?['name']?.toString(),
+                  selected: _scope == 'meal',
+                  onTap: () => setState(() {
+                    _scope = 'meal';
+                    _foods.clear();
+                  }),
+                ),
+                ChoiceTile(
+                  label: 'The whole day',
+                  subtitle: widget.sharedDinners
+                      ? 'Breakfast, lunch and snacks. The family dinner stays.'
+                      : 'Every meal on this day',
+                  selected: _scope == 'day',
+                  onTap: () => setState(() {
+                    _scope = 'day';
+                    _foods.clear();
+                  }),
+                ),
+                const SizedBox(height: 8),
+              ],
+              const Text('What did you not like? (optional)',
+                  style: TextStyle(fontSize: 19, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final r in _reasons)
+                    _chip(r[1], _picked.contains(r[0]), () => setState(() {
+                          if (!_picked.remove(r[0])) _picked.add(r[0]);
+                        })),
+                ],
+              ),
+              if (_picked.contains('ingredient')) ...[
+                const SizedBox(height: 18),
+                const Text('Which foods?', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 4),
+                const Text('We will leave these out of your meals from now on.',
+                    style: TextStyle(color: AppColors.muted, fontSize: 16)),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final f in _foodChoices)
+                      _chip(
+                        f['name'].toString(),
+                        _foods.contains((f['ingredient_id'] as num).toInt()),
+                        () => setState(() {
+                          final id = (f['ingredient_id'] as num).toInt();
+                          if (!_foods.remove(id)) _foods.add(id);
+                        }),
+                      ),
+                  ],
+                ),
+              ],
+              const SizedBox(height: 18),
+              TextField(
+                controller: _note,
+                maxLength: 160,
+                maxLines: 2,
+                minLines: 1,
+                style: const TextStyle(fontSize: 19),
+                onChanged: (_) => setState(() {}),
+                decoration: fieldDecoration('Tell us more (optional)',
+                    hint: 'For example: too mushy, too spicy, takes too long'),
+              ),
+              if (hasFeedback)
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: _remember,
+                  onChanged: (v) => setState(() => _remember = v),
+                  title: const Text('Remember this for future plans', style: TextStyle(fontSize: 18)),
+                  subtitle: const Text('You can see and remove it later in your details.',
+                      style: TextStyle(fontSize: 15, color: AppColors.muted)),
+                ),
+              const SizedBox(height: 12),
+              FilledButton(onPressed: _submit, child: Text(button)),
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cancel'),
+              ),
+            ],
+          ),
         ),
       ),
     );

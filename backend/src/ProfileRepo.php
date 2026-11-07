@@ -32,6 +32,7 @@ final class ProfileRepo
             return null;
         }
         $p['exclusions'] = $this->exclusions($memberId);
+        $p['preferences'] = $this->preferences($memberId);
 
         $dr = $this->db->prepare(
             'SELECT drink_key, name, kcal_per_serving, is_alcohol, servings_per_week
@@ -47,6 +48,105 @@ final class ProfileRepo
         $ex = $this->db->prepare('SELECT name, kind FROM dietary_exclusions WHERE member_id = ? ORDER BY id');
         $ex->execute([$memberId]);
         return $ex->fetchAll();
+    }
+
+    /** Most notes kept per person; the oldest go first. */
+    public const MAX_NOTES = 15;
+    public const NOTE_MAX_CHARS = 200;
+
+    /** Free-text food notes ("Does not like mushy textures"), newest first: [{id, note}]. */
+    public function preferences(int $memberId): array
+    {
+        $st = $this->db->prepare('SELECT id, note FROM member_preferences WHERE member_id = ? ORDER BY id DESC');
+        $st->execute([$memberId]);
+        return array_map(fn($r) => ['id' => (int)$r['id'], 'note' => $r['note']], $st->fetchAll());
+    }
+
+    /** Just the note texts, for the planner. */
+    public function notes(int $memberId): array
+    {
+        return array_column($this->preferences($memberId), 'note');
+    }
+
+    /** Adds a note (skipping an exact repeat) and keeps only the newest MAX_NOTES. */
+    public function addNote(int $memberId, string $note): void
+    {
+        $note = mb_substr(Input::text($note), 0, self::NOTE_MAX_CHARS);
+        if ($note === '' || in_array(mb_strtolower($note), array_map('mb_strtolower', $this->notes($memberId)), true)) {
+            return;
+        }
+        $this->db->prepare('INSERT INTO member_preferences (member_id, note) VALUES (?, ?)')->execute([$memberId, $note]);
+        $this->trimNotes($memberId);
+    }
+
+    /** Replaces all notes (the person edited the list). */
+    public function saveNotes(int $memberId, array $notes): void
+    {
+        $this->db->prepare('DELETE FROM member_preferences WHERE member_id = ?')->execute([$memberId]);
+        $ins = $this->db->prepare('INSERT INTO member_preferences (member_id, note) VALUES (?, ?)');
+        // Oldest first, so the ids keep the order the person sees (newest first).
+        foreach (array_reverse($notes) as $n) {
+            $ins->execute([$memberId, $n]);
+        }
+    }
+
+    private function trimNotes(int $memberId): void
+    {
+        $st = $this->db->prepare('SELECT id FROM member_preferences WHERE member_id = ? ORDER BY id DESC LIMIT 1 OFFSET ' . self::MAX_NOTES);
+        $st->execute([$memberId]);
+        if (($cut = $st->fetchColumn()) !== false) {
+            $this->db->prepare('DELETE FROM member_preferences WHERE member_id = ? AND id <= ?')->execute([$memberId, $cut]);
+        }
+    }
+
+    /**
+     * Adds foods as dislikes unless they are already listed (as an allergy or dislike).
+     * @return string[] the names that were added
+     */
+    public function addDislikes(int $memberId, array $names): array
+    {
+        $have = array_map(fn($e) => mb_strtolower($e['name']), $this->exclusions($memberId));
+        $added = [];
+        $ins = $this->db->prepare("INSERT INTO dietary_exclusions (member_id, name, kind) VALUES (?, ?, 'dislike')");
+        foreach ($names as $n) {
+            $n = mb_substr(Input::text($n), 0, 80);
+            if ($n === '' || in_array(mb_strtolower($n), $have, true) || count($have) >= 30) {
+                continue;
+            }
+            $ins->execute([$memberId, $n]);
+            $have[] = mb_strtolower($n);
+            $added[] = $n;
+        }
+        return $added;
+    }
+
+    /**
+     * Notes as sent by the app when the person edits them: a list of strings (or {note}).
+     * @return array{0: ?array, 1: ?string} the clean list (null = not sent) and an error
+     */
+    public static function cleanNotes(mixed $raw): array
+    {
+        if ($raw === null) {
+            return [null, null];
+        }
+        if (!is_array($raw)) {
+            return [null, 'Food notes must be a list.'];
+        }
+        $out = [];
+        foreach ($raw as $n) {
+            $t = Input::text(is_array($n) ? ($n['note'] ?? '') : $n);
+            if ($t === '') {
+                continue;
+            }
+            if (mb_strlen($t) > self::NOTE_MAX_CHARS) {
+                return [null, 'Each food note can be at most ' . self::NOTE_MAX_CHARS . ' characters.'];
+            }
+            $out[] = $t;
+        }
+        if (count($out) > self::MAX_NOTES) {
+            return [null, 'Please keep at most ' . self::MAX_NOTES . ' food notes.'];
+        }
+        return [$out, null];
     }
 
     /** Replaces a member's allergies and dislikes. */
@@ -97,6 +197,9 @@ final class ProfileRepo
             ]);
 
             $this->saveExclusions($memberId, $d['exclusions']);
+            if ($d['preferences'] !== null) {
+                $this->saveNotes($memberId, $d['preferences']);
+            }
 
             $this->db->prepare('DELETE FROM usual_drinks WHERE member_id = ?')->execute([$memberId]);
             $insDrink = $this->db->prepare(
@@ -214,6 +317,10 @@ final class ProfileRepo
         if ($exError !== null) {
             $errors['exclusions'] = $exError;
         }
+        [$notes, $notesError] = self::cleanNotes($in['preferences'] ?? null);
+        if ($notesError !== null) {
+            $errors['preferences'] = $notesError;
+        }
 
         // Usual drinks: either a key from Drinks::CATALOGUE or a custom drink with its own calories.
         $drinks = [];
@@ -283,6 +390,7 @@ final class ProfileRepo
             'diet_type' => $diet,
             'pregnant_or_breastfeeding' => !empty($in['pregnant_or_breastfeeding']),
             'exclusions' => $exclusions,
+            'preferences' => $notes,
             'usual_drinks' => $drinks,
         ];
     }

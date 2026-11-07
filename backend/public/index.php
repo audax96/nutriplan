@@ -238,6 +238,12 @@ try {
         ok($plan);
     }
 
+    // Swap one meal, one day, or one shared dinner of a finished week (built in the background,
+    // like a new week). What the person did not like can be saved to their food preferences.
+    if (preg_match('#^/api/plans/(\d+)/swap$#', $path, $m) && $method === 'POST') {
+        ok($plans->startSwap($userId, (int)$m[1], $input), 202);
+    }
+
     if (preg_match('#^/api/plans/(\d+)/grocery$#', $path, $m) && $method === 'GET') {
         $plan = $plans->get($userId, (int)$m[1]) ?? throw new ApiException(404, 'not_found', 'Plan not found.');
         if ($plan['status'] !== 'ready') {

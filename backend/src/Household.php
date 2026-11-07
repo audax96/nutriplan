@@ -102,6 +102,7 @@ final class Household
             return null;
         }
         $m['exclusions'] = (new ProfileRepo($this->db))->exclusions($memberId);
+        $m['preferences'] = (new ProfileRepo($this->db))->preferences($memberId);
         $m['age'] = $m['birth_date'] ? TargetCalculator::age((string)$m['birth_date']) : null;
         return $m;
     }
@@ -124,6 +125,7 @@ final class Household
                     'age'        => TargetCalculator::age((string)$m['birth_date']),
                     'diet_type'  => $m['diet_type'],
                     'exclusions' => $profiles->exclusions((int)$m['id']),
+                    'notes'      => $profiles->notes((int)$m['id']),
                 ];
                 continue;
             }
@@ -135,7 +137,7 @@ final class Household
             if (empty($p['consent_at'])) {
                 throw new ApiException(422, 'consent_required', 'Please accept the privacy and "not medical advice" notice first.');
             }
-            $out[] = $base + ['profile' => $p];
+            $out[] = $base + ['profile' => $p, 'notes' => $profiles->notes((int)$m['id'])];
         }
         if ($out === []) {
             throw new ApiException(422, 'profile_missing', 'Please complete your profile first.');
@@ -234,6 +236,9 @@ final class Household
                 )->execute([$name, $d['birth_date'], $d['diet_type'], $memberId, $userId]);
             }
             (new ProfileRepo($this->db))->saveExclusions($memberId, $d['exclusions']);
+            if ($d['preferences'] !== null) {
+                (new ProfileRepo($this->db))->saveNotes($memberId, $d['preferences']);
+            }
             $this->db->commit();
         } catch (\Throwable $t) {
             if ($this->db->inTransaction()) {
@@ -329,11 +334,16 @@ final class Household
         if ($exError !== null) {
             $fields['exclusions'] = $exError;
         }
+        [$notes, $notesError] = ProfileRepo::cleanNotes($in['preferences'] ?? null);
+        if ($notesError !== null) {
+            $fields['preferences'] = $notesError;
+        }
 
         return [
             'birth_date' => $birth ? $birth->format('Y-m-d') : null,
             'diet_type'  => $diet,
             'exclusions' => $exclusions,
+            'preferences' => $notes,
         ];
     }
 }

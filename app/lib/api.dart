@@ -187,6 +187,13 @@ class Api {
     return d == null ? null : _map(d);
   }
 
+  /// Swaps one meal, one day, or the shared family dinner of a finished week. Like [startPlan]
+  /// it returns at once with status "building"; poll [latestPlan] until it is "ready".
+  /// [body]: member_id, day (0-based), scope ('meal' or 'day'), meal (index in that day),
+  /// feedback: {reasons, ingredient_ids, note, remember}.
+  Future<Map<String, dynamic>> swapMeal(int planId, Map<String, dynamic> body) async =>
+      _map(await _send('POST', '/api/plans/$planId/swap', body: body));
+
   Future<Map<String, dynamic>> grocery(int planId) async =>
       _map(await _send('GET', '/api/plans/$planId/grocery'));
 

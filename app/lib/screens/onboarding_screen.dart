@@ -38,7 +38,8 @@ const _paceChoices = [
 /// Used for the account holder's first setup, for editing a profile later, and (with
 /// [addingMember] or [memberId]) for other adults in the family.
 class OnboardingScreen extends StatefulWidget {
-  const OnboardingScreen({super.key, this.existing, this.memberId, this.addingMember = false});
+  const OnboardingScreen(
+      {super.key, this.existing, this.memberId, this.addingMember = false, this.initialStep = 0});
 
   final Map<String, dynamic>? existing;
 
@@ -48,6 +49,9 @@ class OnboardingScreen extends StatefulWidget {
 
   /// True when adding a new adult to the family.
   final bool addingMember;
+
+  /// Opens on this step (2 = goal and daily targets), for "Change my goals".
+  final int initialStep;
 
   @override
   State<OnboardingScreen> createState() => _OnboardingScreenState();
@@ -75,6 +79,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   bool _consent = false;
   final List<Map<String, String>> _exclusions = [];
 
+  /// Food notes saved from swapped meals ("Did not like the texture ..."). Only sent back
+  /// when they were loaded, so an edit can never wipe notes the screen did not show.
+  final List<String> _notes = [];
+  bool _notesLoaded = false;
+
   // Usual drinks: what the person already drinks. Their calories come off the daily target.
   final List<Map<String, dynamic>> _usualDrinks = [];
   List<Map<String, dynamic>> _drinkOptions = [];
@@ -92,8 +101,18 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   void initState() {
     super.initState();
     _loadDrinkOptions();
+    final first = widget.initialStep;
+    _step = first < 0 ? 0 : (first >= _stepCount ? _stepCount - 1 : first);
     final e = widget.existing;
     if (e == null) return;
+    final prefs = e['preferences'];
+    if (prefs is List) {
+      _notesLoaded = true;
+      for (final p in prefs) {
+        final n = p is Map ? p['note'] : p;
+        if (n != null && n.toString().trim().isNotEmpty) _notes.add(n.toString());
+      }
+    }
     _name.text = (e['name'] ?? '').toString();
     _sex = e['sex']?.toString();
     _birth = DateTime.tryParse(e['birth_date']?.toString() ?? '');
@@ -230,6 +249,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         return 2;
       case 'diet_type':
       case 'exclusions':
+      case 'preferences':
         return 3;
       case 'usual_drinks':
       case 'custom_kcal':
@@ -340,6 +360,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       'pregnant_or_breastfeeding': _pregnant,
       'consent': _consent,
       'exclusions': _exclusions,
+      if (_notesLoaded) 'preferences': _notes,
       'usual_drinks': _usualDrinks,
     };
     try {
@@ -520,32 +541,31 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           Text('We never set calories below a safe minimum.',
               style: Theme.of(context).textTheme.bodySmall),
         ],
-        const SizedBox(height: 16),
-        Theme(
-          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-          child: ExpansionTile(
-            tilePadding: EdgeInsets.zero,
-            childrenPadding: const EdgeInsets.only(bottom: 8),
-            title: const Text('Set my own calories and nutrients (optional)',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-            subtitle: const Text('If you leave these blank, we will work them out for you.',
-                style: TextStyle(color: AppColors.muted, fontSize: 16)),
-            iconColor: AppColors.accent,
-            collapsedIconColor: AppColors.muted,
-            initiallyExpanded: _calories.text.isNotEmpty ||
-                _protein.text.isNotEmpty ||
-                _carbs.text.isNotEmpty ||
-                _fat.text.isNotEmpty ||
-                _errors['calorie_override'] != null ||
-                _errors['macros'] != null ||
-                _errors['target_protein_g'] != null ||
-                _errors['target_carb_g'] != null ||
-                _errors['target_fat_g'] != null,
+        const SizedBox(height: 24),
+        // Always visible (testers could not find it inside a folded section).
+        AppCard(
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const SizedBox(height: 8),
-              _numberField(_calories, 'Daily calories', 'calorie_override', suffix: 'kcal'),
+              Row(
+                children: [
+                  const Icon(Icons.track_changes, color: AppColors.accent, size: 28),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(_ownerForm ? 'Your daily targets' : 'Daily targets for $_who',
+                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                  'Optional. Leave these blank and we will work them out from the details above.',
+                  style: TextStyle(color: AppColors.muted, fontSize: 16)),
               const SizedBox(height: 16),
-              const Text('Grams per day',
+              _numberField(_calories, 'Daily calories', 'calorie_override', suffix: 'kcal'),
+              const SizedBox(height: 18),
+              const Text('Protein, carbs and fat (grams per day)',
                   style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
               const SizedBox(height: 8),
               Row(
@@ -644,6 +664,34 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 ),
             ],
           ),
+        ],
+        if (_notes.isNotEmpty) ...[
+          const SizedBox(height: 24),
+          const Text('Food notes',
+              style: TextStyle(fontSize: 19, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 4),
+          const Text('What you told us when you swapped a meal. Remove any that no longer apply.',
+              style: TextStyle(color: AppColors.muted, fontSize: 16)),
+          const SizedBox(height: 10),
+          for (final n in List<String>.from(_notes))
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: AppCard(
+                padding: const EdgeInsets.fromLTRB(16, 8, 4, 8),
+                child: Row(
+                  children: [
+                    Expanded(child: Text(n, style: const TextStyle(fontSize: 17, height: 1.35))),
+                    IconButton(
+                      tooltip: 'Remove this note',
+                      iconSize: 26,
+                      onPressed: () => setState(() => _notes.remove(n)),
+                      icon: const Icon(Icons.close, color: AppColors.muted),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          if (_errors['preferences'] != null) _errorText(_errors['preferences']),
         ],
       ],
     );

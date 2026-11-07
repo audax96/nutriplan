@@ -11,5 +11,3 @@ app/.dart_tool/
 .idea/
 *.iml
 *.zip
-*.sql.gz
-.DS_Store

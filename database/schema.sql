@@ -146,6 +146,8 @@ CREATE TABLE meal_plans (
   target_json   JSON NULL,                          -- adult targets keyed by member id
   plan_json     JSON NULL,
   attempts      TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  job_json      JSON NULL,                          -- set when this row swaps a meal or day of base_plan_id
+  base_plan_id  INT UNSIGNED NULL,
   created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   KEY idx_plans_user (user_id, created_at),
@@ -184,4 +186,15 @@ CREATE TABLE IF NOT EXISTS rate_limits (
   key_hash   CHAR(64) NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_rl (bucket, key_hash, created_at)
+) ENGINE=InnoDB;
+
+-- Free-text food notes a person gave us ("Does not like mushy textures"), mostly from
+-- swapping a meal. Sent to the planner as taste preferences. Newest 15 per person are kept.
+CREATE TABLE IF NOT EXISTS member_preferences (
+  id         INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  member_id  INT UNSIGNED NOT NULL,
+  note       VARCHAR(200) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_prefs_member (member_id),
+  CONSTRAINT fk_prefs_member FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;

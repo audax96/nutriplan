@@ -1,0 +1,40 @@
+:root {
+  --bg: #f6f5f1; --card: #ffffff; --text: #1d2420; --muted: #6a736d; --line: #e3e1da;
+  --ok: #1f7a4d; --ok-bg: #e2f2e9; --warn: #a15c00; --warn-bg: #fdf0d9; --bad: #b3261e; --bad-bg: #fbe4e2;
+  --accent: #1f5f45; --accent2: #c27b1c;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #131815; --card: #1b221e; --text: #e8ece9; --muted: #98a39c; --line: #2c3530;
+    --ok: #5fcf95; --ok-bg: #173325; --warn: #f0b95a; --warn-bg: #382a12; --bad: #ff8f86; --bad-bg: #3d1c19;
+    --accent: #5fcf95; --accent2: #f0b95a;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; }
+header { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 24px 20px 8px; max-width: 1100px; margin: 0 auto; }
+h1 { margin: 0; font-size: 1.5rem; }
+h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 28px 0 10px; }
+main { max-width: 1100px; margin: 0 auto; padding: 0 20px 48px; }
+.muted { color: var(--muted); margin: 2px 0 0; }
+.small { font-size: .85rem; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.grid.two { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.label { font-size: .85rem; color: var(--muted); }
+.value { font-size: 1.6rem; font-weight: 600; margin-top: 2px; }
+.sub { font-size: .85rem; color: var(--muted); margin-top: 2px; }
+.pill { padding: 6px 14px; border-radius: 999px; font-weight: 600; font-size: .9rem; white-space: nowrap; }
+.ok { background: var(--ok-bg); color: var(--ok); }
+.warn { background: var(--warn-bg); color: var(--warn); }
+.bad { background: var(--bad-bg); color: var(--bad); }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; background: currentColor; }
+.status { display: flex; align-items: center; font-weight: 600; margin-top: 4px; }
+.status.ok { color: var(--ok); background: none; }
+.status.warn { color: var(--warn); background: none; }
+.status.bad { color: var(--bad); background: none; }
+.bar { height: 8px; border-radius: 4px; background: var(--line); margin-top: 8px; overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--accent); }
+.bar.warn > i { background: var(--accent2); }
+.bar.bad > i { background: var(--bad); }
+canvas { width: 100%; display: block; margin-top: 8px; }

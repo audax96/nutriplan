@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NutriPlan status</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div>
+    <h1>NutriPlan status</h1>
+    <p id="updated" class="muted">Loading…</p>
+  </div>
+  <div id="overall" class="pill">…</div>
+</header>
+
+<main>
+  <section>
+    <h2>Services</h2>
+    <div id="checks" class="grid"></div>
+  </section>
+
+  <section>
+    <h2>Containers</h2>
+    <div id="containers" class="grid"></div>
+  </section>
+
+  <section>
+    <h2>Mac mini</h2>
+    <div id="mac" class="grid"></div>
+  </section>
+
+  <section>
+    <h2>Last hour</h2>
+    <div class="grid two">
+      <div class="card"><div class="label">API response time (ms)</div><canvas id="c_ms" height="110"></canvas></div>
+      <div class="card"><div class="label">System load (1 min) and container CPU %</div><canvas id="c_load" height="110"></canvas></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Claude usage, last 24 h</h2>
+    <div id="claude" class="grid"></div>
+    <p class="muted small">Counted from API logs. Check the Anthropic Console for real spend.</p>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

@@ -31,6 +31,10 @@ class _ChildScreenState extends State<ChildScreen> {
   bool _consent = false;
   final List<Map<String, String>> _exclusions = [];
 
+  /// Food notes saved from swapped dinners; only sent back when they were loaded.
+  final List<String> _notes = [];
+  bool _notesLoaded = false;
+
   Map<String, String> _errors = {};
   bool _busy = false;
   String? _error;
@@ -50,6 +54,14 @@ class _ChildScreenState extends State<ChildScreen> {
         if (item is Map) {
           _exclusions.add({'name': item['name'].toString(), 'kind': item['kind'].toString()});
         }
+      }
+    }
+    final prefs = e['preferences'];
+    if (prefs is List) {
+      _notesLoaded = true;
+      for (final p in prefs) {
+        final n = p is Map ? p['note'] : p;
+        if (n != null && n.toString().trim().isNotEmpty) _notes.add(n.toString());
       }
     }
   }
@@ -114,6 +126,7 @@ class _ChildScreenState extends State<ChildScreen> {
       'diet_type': _diet,
       'consent': _consent,
       'exclusions': _exclusions,
+      if (_notesLoaded) 'preferences': _notes,
     };
     try {
       if (widget.memberId == null) {
@@ -256,6 +269,37 @@ class _ChildScreenState extends State<ChildScreen> {
                             ),
                         ],
                       ),
+                    ],
+                    if (_notes.isNotEmpty) ...[
+                      const SizedBox(height: 24),
+                      const Text('Food notes',
+                          style: TextStyle(fontSize: 19, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 4),
+                      const Text(
+                          'What you told us when you swapped a dinner. Remove any that no longer apply.',
+                          style: TextStyle(color: AppColors.muted, fontSize: 16)),
+                      const SizedBox(height: 10),
+                      for (final n in List<String>.from(_notes))
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: AppCard(
+                            padding: const EdgeInsets.fromLTRB(16, 8, 4, 8),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                    child: Text(n,
+                                        style: const TextStyle(fontSize: 17, height: 1.35))),
+                                IconButton(
+                                  tooltip: 'Remove this note',
+                                  iconSize: 26,
+                                  onPressed: () => setState(() => _notes.remove(n)),
+                                  icon: const Icon(Icons.close, color: AppColors.muted),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      _errorText(_errors['preferences']),
                     ],
                     const SizedBox(height: 20),
                     AppCard(

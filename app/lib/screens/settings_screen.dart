@@ -64,9 +64,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  void _editDetails() {
+  /// Loads the details fresh: a swapped meal may have added dislikes or food notes since the
+  /// app opened, and saving an old copy would wipe them.
+  Future<void> _editDetails() async {
+    var profile = widget.profile;
+    try {
+      final fresh = await Api.instance.getProfile();
+      if (fresh['profile'] is Map) profile = Map<String, dynamic>.from(fresh['profile'] as Map);
+    } on ApiException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+      return;
+    }
+    if (!mounted) return;
     Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => OnboardingScreen(existing: widget.profile)));
+        MaterialPageRoute(builder: (_) => OnboardingScreen(existing: profile)));
   }
 
   Widget _row(IconData icon, String title, String subtitle, VoidCallback onTap,
