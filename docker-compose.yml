@@ -51,9 +51,20 @@ services:
       # Ceilings for the whole server per 24 h, so Claude credit cannot be drained.
       DAILY_PLAN_LIMIT: ${DAILY_PLAN_LIMIT:-100}
       DAILY_SCAN_LIMIT: ${DAILY_SCAN_LIMIT:-300}
+      # Email (password reset and sign-in codes).
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-tls}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      # Testing only: with no SMTP_HOST, write emails (codes included) to the API log.
+      MAIL_LOG_ONLY: ${MAIL_LOG_ONLY:-0}
     volumes:
       - ./backend:/app:ro         # edit PHP on your machine, no rebuild needed (read-only inside)
       - ./database:/database:ro
+    # A tiny init process reaps the background jobs (plans, emails) when they finish.
+    init: true
     mem_limit: 1g
     pids_limit: 200
     read_only: true

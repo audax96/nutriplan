@@ -124,7 +124,7 @@ final class Auth
 
         $u = false;
         if ($email !== '' && strlen($email) <= 254 && strlen($password) <= 1024) {
-            $st = $this->db->prepare('SELECT id, password_hash FROM users WHERE email = ?');
+            $st = $this->db->prepare('SELECT id, email, password_hash, twofa_email FROM users WHERE email = ?');
             $st->execute([$email]);
             $u = $st->fetch();
         }
@@ -139,6 +139,10 @@ final class Auth
         if (password_needs_rehash($u['password_hash'], PASSWORD_DEFAULT)) {
             $this->db->prepare('UPDATE users SET password_hash = ? WHERE id = ?')
                 ->execute([password_hash($password, PASSWORD_DEFAULT), $u['id']]);
+        }
+        if ((int)$u['twofa_email'] === 1) {
+            // Two-step sign-in: no session yet, just a challenge; the code goes to their inbox.
+            return (new AccountSecurity($this->db, $this))->startLoginChallenge((int)$u['id'], (string)$u['email']);
         }
         return $this->issueToken((int)$u['id']);
     }
@@ -167,7 +171,8 @@ final class Auth
         return $hash ??= password_hash(bin2hex(random_bytes(16)), PASSWORD_DEFAULT);
     }
 
-    private function issueToken(int $userId): array
+    /** A new session token for this person (after a password, or a password plus an emailed code). */
+    public function issueToken(int $userId): array
     {
         // Housekeeping: expired tokens are useless, and nobody needs more than a handful of
         // signed-in devices, so only the newest MAX_TOKENS - 1 are kept before adding this one.
@@ -202,6 +207,23 @@ final class Auth
             throw new ApiException(401, 'unauthorized', 'Your session has expired. Please sign in again.');
         }
         return (int)$id;
+    }
+
+    /** Signs the person out everywhere, except (optionally) this device. */
+    public function revokeAll(int $userId, bool $keepCurrent = false): void
+    {
+        $token = $keepCurrent ? self::bearer() : null;
+        if ($token !== null) {
+            $this->db->prepare('DELETE FROM api_tokens WHERE user_id = ? AND token_hash <> ?')->execute([$userId, hash('sha256', $token)]);
+        } else {
+            $this->db->prepare('DELETE FROM api_tokens WHERE user_id = ?')->execute([$userId]);
+        }
+    }
+
+    /** Clears the failed sign-in counters for an email (after a successful password reset). */
+    public function clearLoginLimits(string $email): void
+    {
+        $this->limits()->clear('login_email', self::normaliseEmail($email));
     }
 
     /** Signs this device out: the token stops working at once. */

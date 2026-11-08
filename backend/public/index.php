@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/../src/bootstrap.php';
 
+use NutriPlan\AccountSecurity;
 use NutriPlan\ApiException;
 use NutriPlan\Auth;
 use NutriPlan\Catalogue;
@@ -109,11 +110,43 @@ try {
         ok($auth->register(Input::str($input['email'] ?? ''), Input::str($input['password'] ?? '')), 201);
     }
     if ($method === 'POST' && $path === '/api/login') {
+        // Either {token}, or with two-step sign-in {two_factor: 'email', challenge, email_hint}.
         ok($auth->login(Input::str($input['email'] ?? ''), Input::str($input['password'] ?? '')));
+    }
+    $security = new AccountSecurity($db, $auth);
+    if ($method === 'POST' && $path === '/api/login/verify') {
+        ok($security->verifyLogin(Input::str($input['challenge'] ?? ''), Input::str($input['code'] ?? '')));
+    }
+    if ($method === 'POST' && $path === '/api/login/resend') {
+        ok($security->resendLogin(Input::str($input['challenge'] ?? '')));
+    }
+    if ($method === 'POST' && $path === '/api/password/forgot') {
+        ok($security->requestReset(Input::str($input['email'] ?? '')));
+    }
+    if ($method === 'POST' && $path === '/api/password/reset') {
+        ok($security->resetPassword(Input::str($input['email'] ?? ''), Input::str($input['code'] ?? ''),
+            Input::str($input['password'] ?? '')));
     }
 
     // ---- authenticated ---------------------------------------------------
     $userId = $auth->requireUser();
+
+    // Sign-in security: password change and two-step sign-in (codes by email).
+    if ($method === 'GET' && $path === '/api/account') {
+        ok($security->status($userId));
+    }
+    if ($method === 'POST' && $path === '/api/password/change') {
+        ok($security->changePassword($userId, Input::str($input['current_password'] ?? ''), Input::str($input['new_password'] ?? '')));
+    }
+    if ($method === 'POST' && $path === '/api/two-factor/start') {
+        ok($security->startEnable($userId, Input::str($input['password'] ?? '')));
+    }
+    if ($method === 'POST' && $path === '/api/two-factor/enable') {
+        ok($security->confirmEnable($userId, Input::str($input['code'] ?? '')));
+    }
+    if ($method === 'POST' && $path === '/api/two-factor/disable') {
+        ok($security->disable($userId, Input::str($input['password'] ?? '')));
+    }
 
     // Sign out: this device's token stops working straight away.
     if ($method === 'POST' && $path === '/api/logout') {

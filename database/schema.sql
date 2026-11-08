@@ -8,6 +8,8 @@ CREATE TABLE users (
   id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   email         VARCHAR(255) NOT NULL UNIQUE,
   password_hash VARCHAR(255) NOT NULL,
+  twofa_email   TINYINT(1) NOT NULL DEFAULT 0,     -- two-step sign-in: a code is emailed at every sign-in
+  email_verified_at DATETIME NULL,                 -- set when the person proved they read this inbox
   created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
@@ -197,4 +199,36 @@ CREATE TABLE IF NOT EXISTS member_preferences (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_prefs_member (member_id),
   CONSTRAINT fk_prefs_member FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- Short-lived 6-digit codes sent by email (password reset, sign-in, turning on two-step
+-- sign-in). Only a salted hash is stored. A sign-in code is tied to a random challenge
+-- the app holds (also stored hashed). At most 5 tries per code.
+CREATE TABLE IF NOT EXISTS email_codes (
+  id             INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id        INT UNSIGNED NOT NULL,
+  purpose        ENUM('reset','login','enable_2fa') NOT NULL,
+  code_hash      CHAR(64) NOT NULL,
+  salt           CHAR(32) NOT NULL,
+  challenge_hash CHAR(64) NULL,
+  attempts       TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  sends          TINYINT UNSIGNED NOT NULL DEFAULT 1,
+  last_sent_at   DATETIME NOT NULL,
+  expires_at     DATETIME NOT NULL,
+  KEY idx_codes_user (user_id, purpose),
+  KEY idx_codes_challenge (challenge_hash),
+  CONSTRAINT fk_codes_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- Emails waiting to be sent by bin/send_mail.php. Deleted once sent; a failed one keeps
+-- only its error (the text is blanked).
+CREATE TABLE IF NOT EXISTS outbox (
+  id         INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  kind       VARCHAR(20) NOT NULL DEFAULT 'mail',  -- 'mail', or 'reset' (look up the account, then email a code)
+  to_email   VARCHAR(255) NOT NULL,
+  subject    VARCHAR(200) NOT NULL,
+  body       TEXT NOT NULL,
+  error      VARCHAR(255) NULL,
+  tries      TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;

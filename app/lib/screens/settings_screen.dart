@@ -4,6 +4,7 @@ import '../api.dart';
 import '../ui.dart';
 import 'auth_screen.dart';
 import 'onboarding_screen.dart';
+import 'security_screen.dart';
 
 /// Account things that are not needed every day, kept in one place.
 class SettingsScreen extends StatefulWidget {
@@ -125,6 +126,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
             _row(Icons.person_outline, 'My details',
                 'Change your weight, goal, food choices and allergies', _editDetails),
+            _row(Icons.shield_outlined, 'Sign-in and security',
+                'Two-step sign-in and changing your password', () {
+              Navigator.of(context)
+                  .push(MaterialPageRoute(builder: (_) => const SecurityScreen()));
+            }),
             _row(Icons.logout, 'Sign out', 'Leave your account on this phone', _signOut),
             const SizedBox(height: 16),
             Text(

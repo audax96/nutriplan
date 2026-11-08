@@ -102,11 +102,7 @@ final class PlanService
     /** Runs the build in a separate PHP process so the request can return immediately. */
     private function launch(int $planId): void
     {
-        $script = dirname(__DIR__) . '/bin/run_plan.php';
-        if (function_exists('exec') && DIRECTORY_SEPARATOR === '/' && PHP_BINARY !== '' && is_file($script)) {
-            $log = is_writable('/proc/1/fd/2') ? '/proc/1/fd/2' : '/dev/null';
-            exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($script) . ' ' . $planId
-                . ' >> ' . escapeshellarg($log) . ' 2>&1 &');
+        if (Background::run('bin/run_plan.php', $planId)) {
             return;
         }
         set_time_limit(0);

@@ -803,6 +803,17 @@ check('food notes are cleaned and capped', $okNotes === ['Likes crunchy food', '
 $vb = (new PlanVerifier($cat))->check($weekA, $t, $constraints);
 check('the verifier sorts its findings by day and by weekly measure', array_key_exists('by_day', $vb) && array_key_exists('weekly', $vb));
 
+echo "\nSign-in security\n";
+check('emails are masked for the app and logs', NutriPlan\Mailer::maskEmail('thandi@example.com') === 'th***@example.com'
+    && NutriPlan\Mailer::maskEmail('ab@x.co.za') === 'a***@x.co.za');
+$smtpErr = '';
+try {
+    (new NutriPlan\Smtp('127.0.0.1', 1, 'tls', '', '', 'Bad sender'))->send("a@b.co\r\nBcc: x@y.z", 'Hi', 'Body');
+} catch (RuntimeException $e) {
+    $smtpErr = $e->getMessage();
+}
+check('the mail client refuses a bad sender or an address with line breaks (no header injection)', str_contains($smtpErr, 'Bad sender or recipient'));
+
 // ---- Running out of output tokens ----------------------------------------------------------
 echo "\nTruncated replies\n";
 $cut = new FakeClaude(['CUT', $week]);

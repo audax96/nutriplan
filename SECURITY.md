@@ -31,7 +31,11 @@ Already good, kept as is: PDO prepared statements everywhere (no SQL injection f
 
 - [ ] HTTPS in front of the API (a reverse proxy with a certificate). Never forward port 8000 to the internet.
 - [ ] Replace `php -S` with nginx + php-fpm on a patched image; keep OS and PHP updates automatic. The proxy should cap body size (16 MB) and use short timeouts: `php -S` reads the whole body before PHP can refuse it, and 4 slow clients can stall it.
-- [ ] Password reset and change-password flows (none exist yet).
+- [x] Password reset (emailed 6-digit code, 15 min, 5 tries) and change password; both sign out other devices and send a notice email. (Nov 2026)
+- [x] Optional two-step sign-in with an emailed code at every sign-in (Settings > Sign-in and security). (Nov 2026)
+- [ ] Set up real email sending (SMTP_* in .env) before anyone relies on reset or two-step sign-in. Without it, anything that needs an email is refused; MAIL_LOG_ONLY=1 (testing only) writes codes to the server log instead.
+- [ ] If email stops working, people with two-step sign-in cannot sign in. Watch `docker compose logs api` for "Email ... failed"; an admin can turn two-step off for one person with SQL (see Contextfile).
+- [ ] Consider an authenticator-app option later: email codes are only as safe as the person's inbox, and reset uses the same inbox.
 - [ ] Email verification before the first plan (stops throwaway accounts), and then the same reply for "email already registered" so sign-up stops revealing who has an account.
 - [ ] Behind a proxy, read the real client IP from it (today the limits use the connecting address; on Docker Desktop every phone shares one).
 - [ ] Give the database user only SELECT/INSERT/UPDATE/DELETE once schema changes move to migrations (today it needs CREATE for the auto-created tables).

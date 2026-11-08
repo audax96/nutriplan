@@ -115,11 +115,55 @@ class Api {
     await _saveToken(_map(data)['token'] as String);
   }
 
-  Future<void> login(String email, String password) async {
-    final data = await _send('POST', '/api/login',
-        body: {'email': email, 'password': password});
+  /// Signs in. Returns null when signed in, or {challenge, email_hint, minutes} when the
+  /// account uses two-step sign-in and an emailed code is needed ([verifyLogin]).
+  Future<Map<String, dynamic>?> login(String email, String password) async {
+    final data = _map(await _send('POST', '/api/login',
+        body: {'email': email, 'password': password}));
+    if (data['two_factor'] != null) return data;
+    await _saveToken(data['token'] as String);
+    return null;
+  }
+
+  /// The second step of two-step sign-in: the code from the email.
+  Future<void> verifyLogin(String challenge, String code) async {
+    final data = await _send('POST', '/api/login/verify',
+        body: {'challenge': challenge, 'code': code});
     await _saveToken(_map(data)['token'] as String);
   }
+
+  Future<Map<String, dynamic>> resendLoginCode(String challenge) async =>
+      _map(await _send('POST', '/api/login/resend', body: {'challenge': challenge}));
+
+  /// Emails a reset code if the address has an account (the answer is the same either way).
+  Future<void> forgotPassword(String email) async {
+    await _send('POST', '/api/password/forgot', body: {'email': email});
+  }
+
+  Future<void> resetPassword(String email, String code, String password) async {
+    await _send('POST', '/api/password/reset',
+        body: {'email': email, 'code': code, 'password': password});
+  }
+
+  // ---- sign-in security (signed in) ----
+  /// {email, two_factor ('email' or null), email_verified, email_sending}
+  Future<Map<String, dynamic>> account() async => _map(await _send('GET', '/api/account'));
+
+  Future<void> changePassword(String current, String next) async {
+    await _send('POST', '/api/password/change',
+        body: {'current_password': current, 'new_password': next});
+  }
+
+  /// Turning on two-step sign-in, part 1: emails a code. Returns {email_hint, minutes}.
+  Future<Map<String, dynamic>> startTwoFactor(String password) async =>
+      _map(await _send('POST', '/api/two-factor/start', body: {'password': password}));
+
+  /// Part 2: the emailed code. Returns the new [account] status.
+  Future<Map<String, dynamic>> enableTwoFactor(String code) async =>
+      _map(await _send('POST', '/api/two-factor/enable', body: {'code': code}));
+
+  Future<Map<String, dynamic>> disableTwoFactor(String password) async =>
+      _map(await _send('POST', '/api/two-factor/disable', body: {'password': password}));
 
   /// Signs out on the server too, so the old token stops working even if it was copied.
   /// The phone forgets the token whatever happens (offline, expired session, ...).
